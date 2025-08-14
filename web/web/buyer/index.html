@@ -1,0 +1,205 @@
+<!doctype html><meta charset="utf-8"><link rel="icon" href="/web/favicon.png"/>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Foody — Витрина</title><script src="/config.js"></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="" crossorigin=""/>
+<style>
+ body{font-family:Inter,system-ui,Arial,sans-serif;margin:0;background:#f7f7f9;color:#111}
+ header{padding:12px 16px;background:#ffffff;border-bottom:1px solid #e5e7eb;display:flex;gap:10px;align-items:center}
+ .wrap{max-width:1000px;margin:0 auto;padding:16px}
+ .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px}
+ .card{background:#ffffff;border:1px solid #e5e7eb;border-radius:14px;padding:14px}
+ .title{font-weight:600;margin:0 0 6px}
+ .price{font-size:18px;margin:8px 0}
+ .strike{opacity:.6;text-decoration:line-through;margin-left:8px;font-size:14px}
+ .badge{display:inline-block;padding:4px 8px;border-radius:10px;background:#1f3b2e;color:#8ee59b;font-weight:600;font-size:12px;margin-left:8px}
+ .sub{opacity:.7;font-size:12px} .empty{opacity:.7;padding:40px 0;text-align:center}
+ .toolbar{display:flex;gap:10px;margin-left:auto;align-items:center}
+ button,select,input{background:#fff;border:1px solid #e5e7eb;color:#111;border-radius:10px;padding:6px 10px}
+ .photo{width:100%;height:140px;background:#0f1115;border:1px solid #2a2f38;border-radius:10px;object-fit:cover;margin-bottom:8px}
+ .modal{position:fixed;inset:0;background:rgba(0,0,0,.7);display:none;align-items:center;justify-content:center}
+ .modal > div{background:#ffffff;border:1px solid #e5e7eb;border-radius:14px;padding:16px;max-width:340px}
+ .pill{border-radius:999px;padding:4px 10px;border:1px solid #2a2f38}
+ .tabs a{padding:6px 10px;border-radius:10px;border:1px solid #2a2f38;text-decoration:none;color:#111}
+ .tabs{display:flex;gap:8px}
+</style>
+<header><img src="/web/logo.png" alt="Foody" style="height:28px;margin-right:10px">
+  <div class="tabs">
+    <a href="/web/buyer/">Витрина</a>
+    <a href="/web/merchant/">ЛК партнёра</a>
+  </div>
+  <div class="toolbar" style="margin-left:auto">
+    <select id="sort">
+      <option value="expiry">По времени</option>
+      <option value="price">По цене</option>
+      <option value="new">Новинки</option>
+      <option value="distance">Ближе</option>
+    </select>
+    <input id="qty" type="number" min="1" step="1" value="1" class="pill" style="width:70px" title="Сколько бронировать">
+    <button id="geoBtn">Гео</button>
+    <button id="myRes">Мои брони</button>
+   <button id="toggleMap">Карта</button></div>
+<div style="margin-left:auto;font-size:12px;opacity:.6">v:nocache-1755133858</div></header>
+<div class='wrap'><div class='controls'><label>Сортировка <select id='sort'><option value='distance'>По удалённости</option><option value='price'>По цене</option><option value='newest'>Сначала новые</option></select></label> <label style='margin-left:10px'>Радиус <input id='radius' type='range' min='500' max='10000' step='500' value='2000'> <span id='radiusVal'>2000</span> м</label></div><div class='grid' id='offers-list'></div></div>
+<div class="wrap">
+  <div id="mapwrap" style="display:none;margin-bottom:12px"><div id="map" style="height:360px;border:1px solid #e5e7eb;border-radius:10px"></div></div>
+  <div id="list" class="grid"></div>
+  <div id="empty" class="empty" style="display:none">Пока нет активных офферов</div>
+</div>
+<div id="modal" class="modal"><div><div id="qrwrap"></div><div id="codetxt" style="margin-top:8px;opacity:.8"></div><div style="margin-top:10px;text-align:right"><button id="closeModal">Закрыть</button></div></div></div>
+<div id="history" class="modal"><div><div style="font-weight:600;margin-bottom:8px">Мои брони</div><div id="histwrap" style="max-height:60vh;overflow:auto"></div><div style="margin-top:10px;text-align:right"><button id="closeHist">Закрыть</button></div></div></div>
+<script>
+const API=(window.foodyApi||'').replace(/\\/$/,'');
+let GEO=null;
+
+// --- map + countdown + share ---
+let MAP=null, LAYER=null;
+function initMap(center){ if(MAP) return; MAP=L.map('map').setView(center||[55.751244,37.618423], 12);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {attribution:'&copy; OpenStreetMap'}).addTo(MAP);
+  LAYER = L.layerGroup().addTo(MAP);
+}
+function renderMarkers(items){
+  if(!MAP||!LAYER) return;
+  LAYER.clearLayers();
+  let any=false;
+  for(const it of items){
+    if(it.rest_lat!=null && it.rest_lon!=null){
+      const m=L.marker([it.rest_lat, it.rest_lon]).addTo(LAYER);
+      const price=money(it.price_cents_effective ?? it.price_cents);
+      const expires=it.expires_at ? new Date(it.expires_at).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'}) : '—';
+      const html = `<b>${esc(it.title||'')}</b><br/>${price}<br/>До: ${expires}<br/><a href='#' data-id='${it.id}' class='goReserve'>Забронировать</a>`;
+      m.bindPopup(html);
+      any=true;
+    }
+  }
+  if(any){ try{ MAP.fitBounds(LAYER.getBounds(), {padding:[20,20]}); }catch{} }
+}
+function countdown(dtISO){
+  if(!dtISO) return '';
+  const end = new Date(dtISO).getTime();
+  const now = Date.now();
+  let s = Math.max(0, Math.floor((end-now)/1000));
+  const h = Math.floor(s/3600); s%=3600;
+  const m = Math.floor(s/60); s%=60;
+  return (h? (h+'ч '):'') + (m+'м ') + (s+'с');
+}
+function shareOffer(it){
+  const url = location.origin + '/web/buyer/?offer='+encodeURIComponent(it.id);
+  const text = `${it.title} — ${money(it.price_cents_effective ?? it.price_cents)}`;
+  if (navigator.share){ navigator.share({title:'Foody', text, url}).catch(()=>{}); }
+  else {
+    navigator.clipboard.writeText(url).then(()=> alert('Ссылка скопирована'));
+  }
+}
+
+const store={
+  get res(){ try{return JSON.parse(localStorage.getItem('RESV')||'[]')}catch{return[]} },
+  set res(v){ localStorage.setItem('RESV', JSON.stringify(v.slice(-100))); } // keep last 100
+};
+function money(c){return (c/100).toLocaleString('ru-RU',{style:'currency',currency:'RUB'})}
+function esc(s){return (s||'').replace(/[&<>]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[m]))}
+async function fetchOffers(){
+  const params=new URLSearchParams(); params.set('sort', $('sort').value);
+  if(GEO){ params.set('lat', GEO.lat); params.set('lon', GEO.lon); }
+  const r=await fetch(API+'/api/v1/offers?'+params.toString()); const data=await r.json();
+  render(data||[]);
+}
+function $(id){return document.getElementById(id)}
+function card(it){
+  const price=money(it.price_cents_effective ?? it.price_cents);
+  const orig=it.original_price_cents ? '<span class="strike">'+money(it.original_price_cents)+'</span>' : '';
+  const badge=it.timer_step ? '<span class="badge">'+it.timer_step+'</span>' : '';
+  const expires=it.expires_at ? new Date(it.expires_at).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'}) : '—';
+  const dist=it.distance_km!=null ? ` • ${it.distance_km.toFixed(1)} км` : '';
+  const img = it.photo_url ? `<img class="photo" src="${esc(it.photo_url)}" alt="">` : '';
+  const el=document.createElement('div'); el.className='card';
+  el.innerHTML = img + `<div class="title">${esc(it.title||'Без названия')}</div>
+    <div class="price">${price}${orig}${badge}</div>
+    <div class="sub">До: <span class='cd' data-expires='${it.expires_at||''}'></span> • Остаток: ${it.qty_left ?? 0}${dist}</div>
+    <div style="margin-top:10px;display:flex;gap:8px"><button data-id="${it.id}" class="reserve">Забронировать</button><button class="share">Поделиться</button></div>`;
+  el.querySelector('.share').onclick = ()=> shareOffer(it);
+  el.querySelector('.reserve').onclick = async ()=>{
+    const qty = Math.max(1, parseInt($('qty').value||'1',10));
+    try{
+      const r = await fetch(API+'/api/v1/reservations', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({offer_id: it.id, qty})});
+      const data = await r.json(); if(!r.ok) throw new Error(data.detail||'Ошибка');
+      const img='data:image/png;base64,'+data.qrcode_png_base64;
+      $('qrwrap').innerHTML='<img src="'+img+'" style="width:240px;height:240px;display:block;margin:auto">';
+      $('codetxt').textContent='Код: '+data.code+' • Кол-во: '+data.qty;
+      $('modal').style.display='flex';
+      // store history
+      store.res = [...store.res, {code:data.code, qty:data.qty, offer:{id:it.id, title:it.title, price:it.price_cents_effective ?? it.price_cents, when: it.expires_at}}];
+      // refresh list to update остаток
+      fetchOffers();
+    }catch(e){ alert('Не удалось забронировать: '+e.message); }
+  };
+  return el;
+}
+function render(items){
+  const list=$('list'), empty=$('empty'); list.innerHTML='';
+  if(!items.length){ empty.style.display='block'; return; } empty.style.display='none';
+  for(const it of items){ list.appendChild(card(it)); }
+  // countdown refresh
+  const upd=()=>{ document.querySelectorAll('.cd').forEach(span=>{ span.textContent = countdown(span.getAttribute('data-expires')); }); };
+  upd(); if(window._cdTimer) clearInterval(window._cdTimer); window._cdTimer=setInterval(upd,1000);
+  // map markers
+  renderMarkers(items);
+}
+$('sort').onchange=fetchOffers;
+$('geoBtn').onclick=()=>{
+  if(navigator.geolocation){
+    navigator.geolocation.getCurrentPosition(pos=>{ GEO={lat: pos.coords.latitude, lon: pos.coords.longitude}; fetchOffers(); }, ()=>alert('Не удалось получить геопозицию'));
+  } else { alert('Геолокация не поддерживается'); }
+};
+$('closeModal').onclick=()=>{ $('modal').style.display='none'; };
+$('myRes').onclick=()=>{
+  const w=$('histwrap'); w.innerHTML='';
+  for(const r of store.res.slice().reverse()){
+    const d=document.createElement('div'); d.className='card'; d.style.margin='6px 0';
+    d.innerHTML = `<div><b>${esc(r.offer.title)}</b></div><div style="opacity:.8">Код: ${esc(r.code)} • Кол-во: ${r.qty}</div>
+      <div style="margin-top:8px;display:flex;gap:8px;justify-content:flex-end">
+        <button class="show">Показать QR</button><button class="cancel">Отменить</button>
+      </div>`;
+    d.querySelector('.show').onclick=async()=>{
+      try{
+        const rs=await fetch(API+'/api/v1/reservations/qr?code='+encodeURIComponent(r.code));
+        const dj=await rs.json();
+        const img='data:image/png;base64,'+dj.qrcode_png_base64;
+        document.getElementById('modal').style.display='flex';
+        document.getElementById('qrwrap').innerHTML='<img src="'+img+'" style="width:240px;height:240px;display:block;margin:auto">';
+        document.getElementById('codetxt').textContent='Код: '+r.code+' • Кол-во: '+r.qty;
+      }catch(e){ alert('Не удалось показать QR'); }
+    };
+    d.querySelector('.cancel').onclick=async ()=>{
+      if(!confirm('Отменить бронь?')) return;
+      const rs = await fetch(API+'/api/v1/reservations/cancel', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({code: r.code})});
+      const data = await rs.json();
+      if(!rs.ok || !data.ok){ alert('Не удалось отменить: '+(data.status||'Ошибка')); return; }
+      // remove from local history
+      store.res = store.res.filter(x=>x.code!==r.code);
+      $('myRes').click(); // reopen
+      fetchOffers();
+    };
+    w.appendChild(d);
+  }
+  $('history').style.display='flex';
+};
+$('closeHist').onclick=()=>{$('history').style.display='none';};
+document.getElementById('toggleMap').onclick=()=>{
+  const mw=$('mapwrap'); mw.style.display = (mw.style.display==='none'||!mw.style.display)?'block':'none';
+  if(mw.style.display==='block'){ initMap(GEO? [GEO.lat, GEO.lon] : [55.751244,37.618423]); renderMarkers(window._lastOffers||[]); }
+};
+const _oldFetchOffers = fetchOffers;
+fetchOffers = async function(){
+  const params=new URLSearchParams(); params.set('sort', $('sort').value); if(GEO){ params.set('lat', GEO.lat); params.set('lon', GEO.lon); }
+  const r=await fetch(API+'/api/v1/offers?'+params.toString()); const data=await r.json(); window._lastOffers = data || []; render(window._lastOffers);
+}
+fetchOffers();
+</script>
+
+<!-- FOODY_BUILD_VERSION: nocache-1755133858 -->
+
+<!-- FOODY_BUILD_VERSION: plus7-1755134211 -->
+
+<!-- FOODY_BUILD_VERSION: canvas-1755135041 -->
