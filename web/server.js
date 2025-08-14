@@ -1,4 +1,5 @@
 const express = require('express');
+const { createProxyMiddleware } = require('http-proxy-middleware');
 const path = require('path');
 const app = express();
 const WEB_DIR = path.join(__dirname, 'web');
@@ -18,6 +19,7 @@ app.use((req,res,next)=>{
 app.get('/config.js', (req,res) => {
   res.type('application/javascript').send(`window.foodyApi=${JSON.stringify(FOODY_API)};`);
 });
+app.use('/api', createProxyMiddleware({ target: FOODY_API, changeOrigin: true, pathRewrite: {'^/api': ''} }));
 app.use('/web', express.static(WEB_DIR, { index: 'index.html', extensions: ['html'] }));
 app.use(express.static(WEB_DIR, { index: 'index.html', extensions: ['html'] }));
 app.get('/health', (req,res)=>res.json({ok:true}));
